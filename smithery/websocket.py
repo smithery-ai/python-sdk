@@ -2,6 +2,7 @@ import json
 import logging
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
+from urllib.parse import urlparse, urlunparse
 
 import anyio
 from pydantic import ValidationError
@@ -12,6 +13,23 @@ from websockets.typing import Subprotocol
 import mcp.types as types
 
 logger = logging.getLogger(__name__)
+
+
+def convert_to_websocket_url(url: str) -> str:
+    """
+    Convert an HTTP URL to a WebSocket URL if needed.
+    
+    Args:
+        url (str): The URL to convert
+        
+    Returns:
+        str: The WebSocket URL (ws:// or wss://)
+    """
+    parsed = urlparse(url)
+    if parsed.scheme in ('http', 'https'):
+        scheme = 'wss' if parsed.scheme == 'https' else 'ws'
+        return urlunparse((scheme, parsed.netloc, parsed.path, parsed.params, parsed.query, parsed.fragment))
+    return url
 
 
 @asynccontextmanager
@@ -33,6 +51,8 @@ async def websocket_client(url: str) -> AsyncGenerator[
     - write_stream: Write JSONRPCMessage objects to this stream to send them
       over the WebSocket to the server.
     """
+    # Convert HTTP URL to WebSocket URL if needed
+    ws_url = convert_to_websocket_url(url)
 
     # Create two in-memory streams:
     # - One for incoming messages (read_stream, written by ws_reader)
@@ -41,7 +61,7 @@ async def websocket_client(url: str) -> AsyncGenerator[
     write_stream, write_stream_reader = anyio.create_memory_object_stream(0)
 
     # Connect using websockets, requesting the "mcp" subprotocol
-    async with ws_connect(url, subprotocols=[Subprotocol("mcp")]) as ws:
+    async with ws_connect(ws_url, subprotocols=[Subprotocol("mcp")]) as ws:
         async def ws_reader():
             """
             Reads text messages from the WebSocket, parses them as JSON-RPC messages,
